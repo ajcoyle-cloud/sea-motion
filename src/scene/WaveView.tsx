@@ -55,7 +55,6 @@ uniform vec3 uC4;
 uniform vec2 uGrid;
 uniform vec2 uOrigin;
 uniform vec2 uSpan;
-uniform vec2 uHeading;
 uniform float uMode;
 varying float vH;
 varying vec2 vUv;
@@ -69,13 +68,10 @@ vec3 ramp(float t) {
   return mix(uC3, uC4, clamp((t - 0.74) / 0.26, 0.0, 1.0));
 }
 
-// Square cells in ship axes, fixed to the water, so the lattice slides aft.
+// Square cells fixed in the water. Travel is added through uOrigin, so the
+// same mesh slides past the hull without any extra marks.
 vec2 seaCoord() {
-  vec2 xz = vWorld.xz + uOrigin;
-  vec2 bow = normalize(uHeading);
-  vec2 side = vec2(-bow.y, bow.x);
-  vec2 ship = vec2(dot(xz, bow), dot(xz, side));
-  return ship / (uSpan / uGrid);
+  return (vWorld.xz + uOrigin) / (uSpan / uGrid);
 }
 
 float meshLine(vec2 coord) {
@@ -224,7 +220,6 @@ export function WaveView(props: Props) {
       uRange: { value: 2 },
       uGrid: { value: new THREE.Vector2(56, 56) },
       uSpan: { value: new THREE.Vector2(SEA_W, SEA_D) },
-      uHeading: { value: new THREE.Vector2(0, -1) },
       uMode: { value: 0 },
       uC0: { value: color('#14d6e6') },
       uC1: { value: color('#3d7cff') },
@@ -475,8 +470,6 @@ export function WaveView(props: Props) {
 
       uniforms.uOrigin.value.set(state.originX, state.originZ);
       uniforms.uTime.value = state.time;
-      const flowHeading = (current.heading * Math.PI) / 180;
-      uniforms.uHeading.value.set(Math.sin(flowHeading), -Math.cos(flowHeading));
       const mode = current.surface === 'colour' ? 1 : current.surface === 'water' ? 2 : 0;
       uniforms.uMode.value = mode;
       seaMat.depthWrite = mode !== 0;
