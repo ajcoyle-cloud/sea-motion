@@ -99,19 +99,27 @@ const rocker = pchip(
   0,
 );
 
-function cosineKeys(keys: Array<[number, number]>, x: number) {
-  if (x <= keys[0][0]) return keys[0][1];
-  if (x >= keys[keys.length - 1][0]) return keys[keys.length - 1][1];
-  for (let i = 1; i < keys.length; i++) {
-    if (x <= keys[i][0]) {
-      const [x0, y0] = keys[i - 1];
-      const [x1, y1] = keys[i];
-      const t = (x - x0) / (x1 - x0);
-      const s = 0.5 - 0.5 * Math.cos(Math.PI * t);
-      return y0 + (y1 - y0) * s;
-    }
-  }
-  return keys[keys.length - 1][1];
+/**
+ * Monotone cubic through the keys. A cosine blend was used here before, and
+ * it forces a flat tangent at every key, which shows up as shelves along the
+ * planform. Endpoint slopes follow Fritsch–Carlson so the curve cannot
+ * overshoot.
+ */
+function fairKeys(keys: Array<[number, number]>, x: number) {
+  const xs = keys.map((k) => k[0]);
+  const ys = keys.map((k) => k[1]);
+  const n = xs.length;
+  const h = xs.slice(1).map((v, i) => v - xs[i]);
+  const d = ys.slice(1).map((v, i) => (v - ys[i]) / h[i]);
+  const endSlope = (d0: number, d1: number, h0: number, h1: number) => {
+    let m = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1);
+    if (m * d0 <= 0) m = 0;
+    else if ((d0 > 0 && m > 3 * d0) || (d0 < 0 && m < 3 * d0)) m = 3 * d0;
+    return m;
+  };
+  const m0 = endSlope(d[0], d[1] ?? d[0], h[0], h[1] ?? h[0]);
+  const m1 = endSlope(d[n - 2], d[n - 3] ?? d[n - 2], h[n - 2], h[n - 3] ?? h[n - 2]);
+  return pchip(xs, ys, m0, m1)(x);
 }
 
 function arcPoint(c: V2, radius: number, angle: number): V2 {
@@ -157,7 +165,7 @@ function buildUpper(): V2[] {
   ];
   for (let i = 0; i <= 36; i++) {
     const x = sheerKeys[0][0] + ((noseSheer.x - sheerKeys[0][0]) * i) / 36;
-    pts.push({ x, y: cosineKeys(sheerKeys, x) });
+    pts.push({ x, y: fairKeys(sheerKeys, x) });
   }
   pushArc(pts, noseC, NOSE_R, Math.PI / 2, 0, 8);
   return pts;
@@ -199,17 +207,13 @@ function halfBeam(x: number) {
     [0.72, 0.64],
     [0.82, 0.42],
     [0.9, 0.24],
-    [0.955, 0.1],
     [1, 0],
   ];
-  let hb = MAX_HALF * cosineKeys(keys, Math.min(1, Math.max(0, f)));
-  const tail = TIP_X - x;
-  if (tail < 0.12) hb *= Math.max(0, tail / 0.12);
-  return hb;
+  return MAX_HALF * fairKeys(keys, Math.min(1, Math.max(0, f)));
 }
 
 function deadriseDeg(x: number) {
-  return cosineKeys(
+  return fairKeys(
     [
       [-6.2, 6],
       [-2.2, 8],
@@ -225,20 +229,26 @@ function deadriseDeg(x: number) {
 }
 
 function flareDeg(x: number) {
-  return cosineKeys(
+  // Eases back toward the stem. A flare that keeps rising on a narrowing
+  // bow crosses the centreline, and clamping it there puts a kink in the
+  // waterlines.
+  return fairKeys(
     [
       [-6.2, 4],
       [-1, 5],
       [2.2, 7],
-      [4.2, 9],
-      [5.4, 11],
+      [3.6, 8],
+      [4.6, 7.2],
+      [5.2, 5.6],
+      [5.7, 4.0],
+      [6.15, 2.0],
     ],
     x,
   );
 }
 
 function bilgeRadius(x: number) {
-  return cosineKeys(
+  return fairKeys(
     [
       [-6.2, 0.28],
       [-2, 0.36],
@@ -252,6 +262,38 @@ function bilgeRadius(x: number) {
   );
 }
 
+/**
+ * Straight topside and bottom, no fillet. Used only when a radius will not
+ * fit. Still meets the requested sheer and keel, so a missed fillet cannot
+ * fatten the waterline the way a quarter-ellipse does.
+ */
+function wedgeSection(hb: number, top: number, bot: number, phi: number, delta: number): V2[] {
+  const tdir = { x: -Math.sin(phi), y: -Math.cos(phi) };
+  const bdir = { x: Math.cos(delta), y: Math.sin(delta) };
+  const det = bdir.x * tdir.y - bdir.y * tdir.x;
+  const dy = top - bot;
+  const a = Math.abs(det) < 1e-8 ? -1 : (hb * tdir.y - dy * tdir.x) / det;
+  const hit = { x: a * bdir.x, y: bot + a * bdir.y };
+  const inside = a > 0.02 && hit.x > 0.015 && hit.x < hb - 0.008 && hit.y > bot + 0.03 && hit.y < top - 0.03;
+  const pts: V2[] = [];
+  const steps = 10;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    if (!inside) {
+      pts.push({ x: hb * (1 - t), y: top + (bot - top) * t });
+      continue;
+    }
+    if (t <= 0.5) {
+      const u = t / 0.5;
+      pts.push({ x: hb + (hit.x - hb) * u, y: top + (hit.y - top) * u });
+    } else {
+      const u = (t - 0.5) / 0.5;
+      pts.push({ x: hit.x + (0 - hit.x) * u, y: hit.y + (bot - hit.y) * u });
+    }
+  }
+  return pts;
+}
+
 function buildSection(hb: number, top: number, bot: number, deadrise: number, flare: number, radius: number): V2[] {
   const depth = top - bot;
   if (depth < 0.03 || hb < 0.015) {
@@ -260,22 +302,26 @@ function buildSection(hb: number, top: number, bot: number, deadrise: number, fl
       { x: 0, y: bot },
     ];
   }
-  const phi = (flare * Math.PI) / 180;
-  const delta = (deadrise * Math.PI) / 180;
-  let Rb = Math.max(0.015, Math.min(radius, depth * 0.42, hb * 0.52));
-  for (let attempt = 0; attempt < 6; attempt++) {
-    const solved = solveSection(hb, top, bot, phi, delta, Rb);
-    if (solved) return solved;
-    Rb *= 0.62;
+  // Flare on a narrow deep bow pulls the topside through the centreline.
+  // The fillet then fails, and a quarter-ellipse stand-in left a bulge in
+  // every waterline forward of that station.
+  const phiCap = Math.atan((hb * 0.9) / depth);
+  const phi = Math.min((Math.max(0, flare) * Math.PI) / 180, phiCap);
+  const delta = (Math.max(1, deadrise) * Math.PI) / 180;
+  const hi = Math.max(0.012, Math.min(radius, depth * 0.42, hb * 0.5));
+  let best = solveSection(hb, top, bot, phi, delta, hi);
+  if (best) return best;
+  let lo = 0.01;
+  let hiR = hi;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const mid = (lo + hiR) / 2;
+    const solved = solveSection(hb, top, bot, phi, delta, mid);
+    if (solved) {
+      best = solved;
+      lo = mid;
+    } else hiR = mid;
   }
-  const soft: V2[] = [];
-  const steps = 14;
-  for (let i = 0; i < steps; i++) {
-    const t = i / (steps - 1);
-    const u = (t * Math.PI) / 2;
-    soft.push({ x: hb * Math.cos(u) ** 0.92, y: top - depth * Math.sin(u) ** 1.08 });
-  }
-  return soft;
+  return best ?? wedgeSection(hb, top, bot, phi, delta);
 }
 
 function solveSection(hb: number, top: number, bot: number, phi: number, delta: number, Rb: number): V2[] | null {
@@ -388,6 +434,13 @@ function buildStations(): Station[] {
     const hb = halfBeam(sheerX);
     let section = buildSection(hb, top, bot, deadriseDeg(xc), flareDeg(xc), bilgeRadius(xc));
     section = addRail(section, Math.min(0.055, Math.max(0.018, hb * 0.11)));
+    // The section solver can miss the requested beam. Scale onto the fair
+    // half-beam so a failed fillet cannot put a hollow in the planform.
+    const widest = section.reduce((m, p) => Math.max(m, p.x), 0);
+    if (widest > 1e-4 && hb > 1e-4) {
+      const scale = hb / widest;
+      if (Math.abs(scale - 1) > 1e-4) section = section.map((p) => ({ x: p.x * scale, y: p.y }));
+    }
     section = resample(section, girth);
     const depth = Math.max(1e-4, top - bot);
     const xs = section.map((p) => xc + rake * ((p.y - bot) / depth));
