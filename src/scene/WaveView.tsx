@@ -218,7 +218,7 @@ export function WaveView(props: Props) {
       uOrigin: { value: new THREE.Vector2() },
       uTime: { value: 0 },
       uRange: { value: 2 },
-      uGrid: { value: new THREE.Vector2(112, 112) },
+      uGrid: { value: new THREE.Vector2(56, 56) },
       uSpan: { value: new THREE.Vector2(SEA_W, SEA_D) },
       uMode: { value: 0 },
       uC0: { value: color('#14d6e6') },
