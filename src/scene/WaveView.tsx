@@ -141,15 +141,6 @@ const KELVIN = Math.asin(1 / 3);
 const WAKE_ALONG = 40;
 const WAKE_ACROSS = 16;
 
-// Extra bow-down only while the slam ring is live. Rise and the slam rate
-// stay as tuned; this is the dig on the hit itself. Short tau on the way
-// down, slower return so the recovery does not become another rise.
-const SLAM_BURY = 0.042;
-const SLAM_BURY_TAU = 0.075;
-const SLAM_RECOVER_TAU = 0.26;
-const SLAM_DRIVE = 0.14;
-const SLAM_HEAVE_SHARE = 0.12;
-
 function surfaceAt(x: number, z: number, waves: WaveComponent[], time: number) {
   let height = 0;
   for (const wave of waves) {
@@ -403,25 +394,8 @@ export function WaveView(props: Props) {
       prevImm: 1,
     };
     let flash = 0;
-    let bury = 0;
-    let buryVel = 0;
-    let buryDrive = 0;
     let boatId = '';
     let boatGroup: THREE.Group | null = null;
-
-    function stepBury(h: number) {
-      const target = buryDrive > 0 ? -SLAM_BURY : 0;
-      const tau = target < bury ? SLAM_BURY_TAU : SLAM_RECOVER_TAU;
-      const omega = 1 / tau;
-      const acc = omega * omega * (target - bury) - 2 * omega * buryVel;
-      buryVel += acc * h;
-      bury += buryVel * h;
-      if (bury > 0) {
-        bury = 0;
-        if (buryVel > 0) buryVel = 0;
-      }
-      buryDrive = Math.max(0, buryDrive - h);
-    }
 
     function syncWaves(waves: WaveComponent[], range: number) {
       waves.forEach((wave, i) => {
@@ -458,9 +432,6 @@ export function WaveView(props: Props) {
         stepBoat(current.boat, current.waves, current.heading, current.speedKn, state, current.scales, 1 / 30);
       }
       flash = 0;
-      bury = 0;
-      buryVel = 0;
-      buryDrive = 0;
       bowStation = readBowStation(boatGroup, current.boat.bowX);
       sternStation = readSternStation(boatGroup, -current.boat.lwl * 0.5);
     }
@@ -498,11 +469,7 @@ export function WaveView(props: Props) {
             current.scales,
             h,
           );
-          if (sample.slammed) {
-            flash = 1;
-            buryDrive = SLAM_DRIVE;
-          }
-          stepBury(h);
+          if (sample.slammed) flash = 1;
         }
       }
 
@@ -518,9 +485,9 @@ export function WaveView(props: Props) {
         const headingRad = (current.heading * Math.PI) / 180;
         boatGroup.rotation.order = 'YXZ';
         boatGroup.rotation.y = Math.PI / 2 - headingRad;
-        boatGroup.rotation.z = state.dofs.pitch.y + bury;
+        boatGroup.rotation.z = state.dofs.pitch.y;
         boatGroup.rotation.x = state.dofs.roll.y;
-        boatGroup.position.y = state.dofs.heave.y + bury * current.boat.bowX * SLAM_HEAVE_SHARE;
+        boatGroup.position.y = state.dofs.heave.y;
 
         boatGroup.updateMatrixWorld();
         if (current.boat.id === 'first-40') {
