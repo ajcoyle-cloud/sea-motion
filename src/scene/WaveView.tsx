@@ -55,7 +55,6 @@ uniform vec3 uC4;
 uniform vec2 uGrid;
 uniform vec2 uOrigin;
 uniform vec2 uSpan;
-uniform vec2 uHeading;
 uniform float uMode;
 varying float vH;
 varying vec2 vUv;
@@ -69,33 +68,17 @@ vec3 ramp(float t) {
   return mix(uC3, uC4, clamp((t - 0.74) / 0.26, 0.0, 1.0));
 }
 
-// Square cells in ship axes, fixed to the water. coord.x points at the bow,
-// so anything painted in x sweeps aft as the boat sails through it.
+// Square cells fixed in the water. Travel is added through uOrigin, so the
+// same mesh slides past the hull without any extra marks.
 vec2 seaCoord() {
-  vec2 xz = vWorld.xz + uOrigin;
-  vec2 bow = normalize(uHeading);
-  vec2 side = vec2(-bow.y, bow.x);
-  vec2 ship = vec2(dot(xz, bow), dot(xz, side));
-  return ship / (uSpan / uGrid);
+  return (vWorld.xz + uOrigin) / (uSpan / uGrid);
 }
 
-float flowMesh(vec2 coord) {
+float meshLine(vec2 coord) {
   vec2 fw = max(fwidth(coord), vec2(1e-4));
-  float distX = abs(fract(coord.x - 0.5) - 0.5);
-  float distY = abs(fract(coord.y - 0.5) - 0.5);
-  // Transverse lines are the ones that travel past the hull. The lengthwise
-  // lines stay in their lanes, so they stay faint or the sea looks bolted on.
-  float across = 1.0 - smoothstep(0.08, 0.9, distX / fw.x);
-  float along = 1.0 - smoothstep(0.2, 1.2, distY / fw.y);
-
-  // Ribs a few metres apart, with a tail on the stern side, wide enough to follow.
-  float cellsPerRib = 2.8;
-  float ribs = coord.x / cellsPerRib;
-  float ribDist = min(fract(ribs), 1.0 - fract(ribs));
-  float aa = max(fwidth(ribs), 1e-4);
-  float rib = 1.0 - smoothstep(0.04, 0.04 + aa * 1.8, ribDist);
-  float tail = smoothstep(0.62, 0.98, fract(ribs)) * (1.0 - rib);
-  return clamp(across * 0.9 + along * 0.18 + rib + tail * 0.4, 0.0, 1.0);
+  vec2 dist = abs(fract(coord - 0.5) - 0.5);
+  float axis = min(dist.x / fw.x, dist.y / fw.y);
+  return 1.0 - smoothstep(0.08, 0.9, axis);
 }
 
 void main() {
@@ -111,7 +94,7 @@ void main() {
   if (uMode < 0.5) {
     float t = clamp(vH / uRange * 0.5 + 0.5, 0.0, 1.0);
     vec3 col = ramp(t);
-    float line = flowMesh(seaCoord());
+    float line = meshLine(seaCoord());
     float alpha = (0.28 + 0.62 * line) * edge;
     gl_FragColor = vec4(col * (0.72 + 0.45 * line), alpha);
     return;
@@ -120,20 +103,16 @@ void main() {
   if (uMode < 1.5) {
     float t = clamp(vH / uRange * 0.5 + 0.5, 0.0, 1.0);
     vec3 col = ramp(t);
-    float line = flowMesh(seaCoord());
+    float line = meshLine(seaCoord());
     vec3 shaded = col * (0.34 + 0.7 * ndl) + vec3(1.0) * spec * 0.12;
     gl_FragColor = vec4(shaded * (0.62 + 0.55 * line), 0.96 * edge);
     return;
   }
 
-  vec2 ship = seaCoord();
-  float ribs = ship.x / 2.8;
-  float ribDist = min(fract(ribs), 1.0 - fract(ribs));
-  float streak = smoothstep(0.07, 0.0, ribDist);
-  float rip = sin(ship.x * 1.7) * cos(ship.y * 1.35);
-  vec2 bow = normalize(uHeading);
-  vec2 beam = vec2(-bow.y, bow.x);
-  n = normalize(n + vec3(bow.x, 0.0, bow.y) * streak * 0.14 + vec3(beam.x, 0.0, beam.y) * rip * 0.045);
+  vec2 flow = vWorld.xz + uOrigin;
+  float rip = sin(flow.x * 2.1) * cos(flow.y * 1.7);
+  float rip2 = sin((flow.x * 0.7 + flow.y) * 3.4);
+  n = normalize(n + vec3(rip, 0.0, rip2) * 0.07);
   float facing = clamp(dot(n, viewDir), 0.0, 1.0);
   float fres = pow(1.0 - facing, 3.0);
   vec3 deep = vec3(0.015, 0.11, 0.26);
@@ -145,7 +124,6 @@ void main() {
   float glint = pow(clamp(dot(n, halfDir), 0.0, 1.0), 90.0);
   float sheen = pow(clamp(dot(n, halfDir), 0.0, 1.0), 10.0) * 0.18;
   water += vec3(1.0, 0.97, 0.9) * (glint * 0.9 + sheen);
-  water += vec3(0.75, 0.9, 0.95) * streak * 0.07;
   gl_FragColor = vec4(water, 0.97 * edge);
 }
 `;
@@ -242,7 +220,6 @@ export function WaveView(props: Props) {
       uRange: { value: 2 },
       uGrid: { value: new THREE.Vector2(56, 56) },
       uSpan: { value: new THREE.Vector2(SEA_W, SEA_D) },
-      uHeading: { value: new THREE.Vector2(0, -1) },
       uMode: { value: 0 },
       uC0: { value: color('#14d6e6') },
       uC1: { value: color('#3d7cff') },
@@ -493,8 +470,6 @@ export function WaveView(props: Props) {
 
       uniforms.uOrigin.value.set(state.originX, state.originZ);
       uniforms.uTime.value = state.time;
-      const flowHeading = (current.heading * Math.PI) / 180;
-      uniforms.uHeading.value.set(Math.sin(flowHeading), -Math.cos(flowHeading));
       const mode = current.surface === 'colour' ? 1 : current.surface === 'water' ? 2 : 0;
       uniforms.uMode.value = mode;
       seaMat.depthWrite = mode !== 0;
