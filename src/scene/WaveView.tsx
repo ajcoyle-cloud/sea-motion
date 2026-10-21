@@ -57,6 +57,7 @@ uniform vec2 uOrigin;
 uniform vec2 uSpan;
 uniform vec2 uHeading;
 uniform float uMode;
+uniform float uLattice;
 varying float vH;
 varying vec2 vUv;
 varying vec3 vNormal;
@@ -69,7 +70,8 @@ vec3 ramp(float t) {
   return mix(uC3, uC4, clamp((t - 0.74) / 0.26, 0.0, 1.0));
 }
 
-// Square cells in ship axes, fixed to the water, so the lattice slides aft.
+// Cells in ship axes, fixed to the water, so the lattice slides aft.
+// Squares are the axis lines. Triangles split each cell on one diagonal.
 vec2 seaCoord() {
   vec2 xz = vWorld.xz + uOrigin;
   vec2 bow = normalize(uHeading);
@@ -82,7 +84,22 @@ float meshLine(vec2 coord) {
   vec2 fw = max(fwidth(coord), vec2(1e-4));
   vec2 dist = abs(fract(coord - 0.5) - 0.5);
   float axis = min(dist.x / fw.x, dist.y / fw.y);
-  return 1.0 - smoothstep(0.08, 0.9, axis);
+  float soft = uLattice > 0.5 ? 0.5 : 0.9;
+  float line = 1.0 - smoothstep(uLattice > 0.5 ? 0.07 : 0.08, soft, axis);
+  if (uLattice < 0.5) return line;
+  float diag = coord.x - coord.y;
+  float dfw = max(fwidth(diag), 1e-4);
+  float ddist = abs(fract(diag - 0.5) - 0.5);
+  return max(line, 1.0 - smoothstep(0.07, soft, ddist / dfw));
+}
+
+// Height still leads. On the triangle mesh, steep faces borrow colour from
+// further along the ramp so a passing wave flashes through the lattice.
+vec3 seaColour(float t, vec3 nrm) {
+  if (uLattice < 0.5) return ramp(t);
+  float slope = clamp(length(nrm.xz) * 2.6, 0.0, 1.0);
+  float live = clamp(t + (slope - 0.18) * 0.42, 0.0, 1.0);
+  return ramp(live);
 }
 
 void main() {
@@ -97,8 +114,15 @@ void main() {
 
   if (uMode < 0.5) {
     float t = clamp(vH / uRange * 0.5 + 0.5, 0.0, 1.0);
-    vec3 col = ramp(t);
+    vec3 col = seaColour(t, n);
     float line = meshLine(seaCoord());
+    if (uLattice > 0.5) {
+      float spark = pow(clamp(dot(n, halfDir), 0.0, 1.0), 22.0);
+      vec3 lit = col * (0.86 + 0.55 * ndl) + vec3(1.0, 0.96, 0.98) * spark * 0.2;
+      float alpha = (0.4 + 0.72 * line) * edge;
+      gl_FragColor = vec4(lit * (0.78 + 0.62 * line), alpha);
+      return;
+    }
     float alpha = (0.28 + 0.62 * line) * edge;
     gl_FragColor = vec4(col * (0.72 + 0.45 * line), alpha);
     return;
@@ -106,10 +130,13 @@ void main() {
 
   if (uMode < 1.5) {
     float t = clamp(vH / uRange * 0.5 + 0.5, 0.0, 1.0);
-    vec3 col = ramp(t);
+    vec3 col = seaColour(t, n);
     float line = meshLine(seaCoord());
-    vec3 shaded = col * (0.34 + 0.7 * ndl) + vec3(1.0) * spec * 0.12;
-    gl_FragColor = vec4(shaded * (0.62 + 0.55 * line), 0.96 * edge);
+    float specGain = uLattice > 0.5 ? 0.32 : 0.12;
+    float light = uLattice > 0.5 ? 0.42 + 0.95 * ndl : 0.34 + 0.7 * ndl;
+    vec3 shaded = col * light + vec3(1.0) * spec * specGain;
+    float lineMix = uLattice > 0.5 ? 0.72 + 0.6 * line : 0.62 + 0.55 * line;
+    gl_FragColor = vec4(shaded * lineMix, 0.96 * edge);
     return;
   }
 
@@ -153,6 +180,7 @@ function surfaceAt(x: number, z: number, waves: WaveComponent[], time: number) {
 }
 
 export type SeaSurface = 'wire' | 'colour' | 'water';
+export type SeaLattice = 'square' | 'triangle';
 
 type Props = {
   boat: Boat;
@@ -165,6 +193,7 @@ type Props = {
   onUserInteract: () => void;
   range: number;
   surface: SeaSurface;
+  lattice: SeaLattice;
 };
 
 export function WaveView(props: Props) {
@@ -226,6 +255,7 @@ export function WaveView(props: Props) {
       uSpan: { value: new THREE.Vector2(SEA_W, SEA_D) },
       uHeading: { value: new THREE.Vector2(0, -1) },
       uMode: { value: 0 },
+      uLattice: { value: 0 },
       uC0: { value: color('#14d6e6') },
       uC1: { value: color('#3d7cff') },
       uC2: { value: color('#8a6bff') },
@@ -491,6 +521,7 @@ export function WaveView(props: Props) {
       uniforms.uHeading.value.set(Math.sin(flowHeading), -Math.cos(flowHeading));
       const mode = current.surface === 'colour' ? 1 : current.surface === 'water' ? 2 : 0;
       uniforms.uMode.value = mode;
+      uniforms.uLattice.value = current.lattice === 'triangle' ? 1 : 0;
       seaMat.depthWrite = mode !== 0;
 
       if (boatGroup) {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { WaveView, type SeaSurface } from './scene/WaveView';
+import { WaveView, type SeaLattice, type SeaSurface } from './scene/WaveView';
 import {
   BOATS,
   PLACEHOLDER_FIGURES,
@@ -54,6 +54,7 @@ export function App() {
   const [drive, setDrive] = useState(false);
   const [custom, setCustom] = useState<ComfortFigures>(PLACEHOLDER_FIGURES);
   const [surface, setSurface] = useState<SeaSurface>('wire');
+  const [lattice, setLattice] = useState<SeaLattice>('square');
 
   const boat = boatById(boatId);
   const selected = waves.find((w) => w.id === active) ?? waves[1];
@@ -112,6 +113,7 @@ export function App() {
         onUserInteract={() => setRotate(false)}
         range={range}
         surface={surface}
+        lattice={lattice}
       />
 
       {readouts && surface !== 'water' && (
@@ -172,6 +174,20 @@ export function App() {
             ] as const
           ).map(([id, label]) => (
             <button key={id} className={surface === id ? 'on' : ''} onClick={() => setSurface(id)}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="pills">
+          <span className="pill-label">Mesh</span>
+          {(
+            [
+              ['square', 'Squares'],
+              ['triangle', 'Triangles'],
+            ] as const
+          ).map(([id, label]) => (
+            <button key={id} className={lattice === id ? 'on' : ''} onClick={() => setLattice(id)}>
               {label}
             </button>
           ))}
