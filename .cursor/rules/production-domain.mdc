@@ -1,0 +1,12 @@
+---
+description: Publish sea-motion changes on the production domain
+alwaysApply: true
+---
+
+# Production domain
+
+https://sea-motion.vercel.app is the production URL for this project. Aliases also include https://sea-motion-la-agency.vercel.app. Both belong to the Vercel project `sea-motion` on the LA team (`la-agency`).
+
+When a change should be visible, create a Vercel deployment of that commit with target `production` on project `sea-motion` (team slug `la-agency`). Use git source `ajcoyle-cloud/sea-motion` and the commit SHA, framework `vite`, install `npm install`, build `npm run build`, output `dist`. A production deployment assigns https://sea-motion.vercel.app.
+
+Do not open a Cloudflare quick tunnel (`trycloudflare.com`) for this project. Preview hostnames from other machines are not this site.
