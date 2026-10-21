@@ -236,7 +236,9 @@ export function App() {
           <Figure label="Slams / hour" value={custom.slammingPerHour} step={1} onChange={(v) => setCustom({ ...custom, slammingPerHour: v })} />
         </div>
         <p className="footnote">
-          Preview model. Roll, vertical acceleration and slamming update from this sea
+          Preview model. With way on, the hull pitches fore and aft and rolls port to
+          starboard on the wave. Stopped, it wallows the way a boat does at anchor.
+          Roll, vertical acceleration and slamming update from this sea
           {drive ? ', scaled toward the figures above' : ''}. Placeholders until a route file is connected.
           {capped ? ' A short wave was eased so the crest does not break the view.' : ''} Space pauses, C hides this panel.
         </p>

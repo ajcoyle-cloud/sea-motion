@@ -2,9 +2,19 @@
  * Real-time sea and hull motion for the promo / in-app preview.
  *
  * The surface is a linear sum of deep-water wave trains (wind wave plus
- * three swells). The hull is a heave / pitch / roll oscillator forced by
- * that surface, with wavelength filtering so a 40 ft boat does not follow
- * 1-second chop. It is a preview model, not the production hydrodynamic solver.
+ * three swells). The hull is forced by that surface, resolved onto the
+ * ship's own axes: pitch is fore and aft, roll is port to starboard.
+ * Wavelength filtering keeps a 40 ft boat off 1-second chop.
+ *
+ * Pitch and roll are one rock — the slope of the sea — while they stay in
+ * phase. With way on, keel and rudder damping kill the roll resonance, so
+ * the hull tracks that slope and the mast leans along a single line. With
+ * no way on, roll rings at its natural period, out of phase with the pitch,
+ * and the boat wallows the way it does at anchor. Forward speed also shifts
+ * the encounter period; that alone is not damping, and without the damping
+ * it drives the roll onto its natural period and makes the wallow worse.
+ *
+ * It is a preview model, not the production hydrodynamic solver.
  *
  * Vertical acceleration is RMS at a point forward of midships.
  * Roll is RMS heel in degrees.
@@ -354,6 +364,9 @@ export function stepOsc(o: Osc, target: number, omega: number, zeta: number, dt:
   return acc;
 }
 
+/** Shared by pitch and by roll once the boat has way on, so the two stay in phase. */
+const SLOPE_TAU = 0.16;
+
 /** Critically damped follow. Heave and pitch use this so they contour the
  *  filtered wave instead of ringing and lifting the fin clear of a trough. */
 function followOsc(o: Osc, target: number, tau: number, dt: number): number {
@@ -362,6 +375,25 @@ function followOsc(o: Osc, target: number, tau: number, dt: number): number {
   o.v += acc * dt;
   o.y += o.v * dt;
   return acc;
+}
+
+/**
+ * 0 at rest, 1 once the keel and rudder are producing lift damping.
+ * The first couple of knots take the edge off the at-anchor roll; by
+ * sailing speed the resonance is gone and roll simply follows the sea.
+ */
+export function wayOn(speedKn: number): number {
+  const metresPerSec = Math.max(0, speedKn) * 0.514444;
+  return 1 - Math.exp(-metresPerSec / 1.1);
+}
+
+function stepRoll(boat: Boat, roll: Osc, target: number, speedKn: number, dt: number): number {
+  const way = wayOn(speedKn);
+  const resonant = (2 * Math.PI) / boat.rollPeriod;
+  const tracking = 1 / SLOPE_TAU;
+  const omega = resonant + (tracking - resonant) * way;
+  const zeta = boat.rollZeta + (1 - boat.rollZeta) * way;
+  return stepOsc(roll, target, omega, zeta, dt);
 }
 
 function clampOsc(o: Osc, limit: number) {
@@ -441,6 +473,7 @@ export function evaluateFrame(
     const gz = -w.amp * w.kz * s;
     const slopeLong = gx * fwdX + gz * fwdZ;
     const slopeBeam = gx * stbdX + gz * stbdZ;
+    // One slope, split onto the fore-aft axis and the port-starboard axis.
     pitchTarget += slopeLong * along;
 
     const argB = (w.k * boat.beam) / 2;
@@ -509,9 +542,10 @@ export function stepBoat(
 
   const frame = evaluateFrame(boat, waves, headingDeg, speedKn, state.originX, state.originZ, state.time, state.dofs);
   const heaveAcc = followOsc(state.dofs.heave, frame.heaveTarget * scales.heave, 0.1, dt);
-  // A little extra pitch, a little late, so the bow still drops back into the sea.
-  const pitchAcc = followOsc(state.dofs.pitch, frame.pitchTarget * scales.pitch * 1.22, 0.16, dt);
-  stepOsc(state.dofs.roll, frame.rollTarget * scales.roll, (2 * Math.PI) / boat.rollPeriod, boat.rollZeta, dt);
+  // A little extra pitch, so the bow still drops back into the sea. Same
+  // time constant as underway roll, so a quartering sea stays one rock.
+  const pitchAcc = followOsc(state.dofs.pitch, frame.pitchTarget * scales.pitch * 1.22, SLOPE_TAU, dt);
+  stepRoll(boat, state.dofs.roll, frame.rollTarget * scales.roll, speedKn, dt);
 
   clampOsc(state.dofs.heave, 4);
   clampOsc(state.dofs.pitch, 0.38);

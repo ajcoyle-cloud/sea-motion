@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Boat, Scales, WaveComponent } from '../sim/model';
-import { emptyDofs, elevationRange, resolveWave, stepBoat } from '../sim/model';
+import { emptyDofs, elevationRange, headingVectors, resolveWave, stepBoat } from '../sim/model';
 import { createBoatGroup } from './boatMesh';
 import { FIRST40_GUIDE } from './first40';
 
@@ -371,16 +371,27 @@ export function WaveView(props: Props) {
     const lockLine = guideLine(guideMaterial(true));
     lockLine.computeLineDistances();
     scene.add(lockLine);
-    const circlePoints: THREE.Vector3[] = [];
-    for (let i = 0; i <= 96; i++) {
-      const theta = (i / 96) * Math.PI * 2;
-      circlePoints.push(new THREE.Vector3(Math.cos(theta), 0, Math.sin(theta)));
-    }
-    const motionCircle = new THREE.Line(new THREE.BufferGeometry().setFromPoints(circlePoints), guideMaterial(false));
-    motionCircle.frustumCulled = false;
-    motionCircle.renderOrder = 3;
-    motionCircle.position.y = guideMidY;
-    scene.add(motionCircle);
+    // Fore-aft and port-starboard only. A circle here reads as the mast
+    // walking every heading, which is the at-anchor wallow.
+    const axisMaterial = guideMaterial(false);
+    const makeAxis = (name: string) => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+      const line = new THREE.Line(geometry, axisMaterial);
+      line.frustumCulled = false;
+      line.renderOrder = 3;
+      line.name = name;
+      scene.add(line);
+      return line;
+    };
+    const pitchAxis = makeAxis('pitch-axis');
+    const rollAxis = makeAxis('roll-axis');
+    const layAxis = (line: THREE.Line, ox: number, oy: number, oz: number, dx: number, dz: number) => {
+      const attr = line.geometry.getAttribute('position') as THREE.BufferAttribute;
+      attr.setXYZ(0, ox - dx, oy, oz - dz);
+      attr.setXYZ(1, ox + dx, oy, oz + dz);
+      attr.needsUpdate = true;
+    };
     const swayA = new THREE.Vector3();
     const swayB = new THREE.Vector3();
     const swayHit = new THREE.Vector3();
@@ -421,7 +432,8 @@ export function WaveView(props: Props) {
       const showGuide = boat.id === 'first-40';
       swayLine.visible = showGuide;
       lockLine.visible = showGuide;
-      motionCircle.visible = showGuide;
+      pitchAxis.visible = showGuide;
+      rollAxis.visible = showGuide;
       if (showGuide) boatGroup.add(swayLine);
       boatId = boat.id;
       state.dofs = emptyDofs();
@@ -483,7 +495,9 @@ export function WaveView(props: Props) {
 
       if (boatGroup) {
         const headingRad = (current.heading * Math.PI) / 180;
-        boatGroup.rotation.order = 'YXZ';
+        // Y, then Z, then X. Pitch stays about the beam and roll about the
+        // keel. The previous YXZ order yawed the bow whenever both were off zero.
+        boatGroup.rotation.order = 'YZX';
         boatGroup.rotation.y = Math.PI / 2 - headingRad;
         boatGroup.rotation.z = state.dofs.pitch.y;
         boatGroup.rotation.x = state.dofs.roll.y;
@@ -502,11 +516,13 @@ export function WaveView(props: Props) {
           swayHit.lerpVectors(swayA, swayB, along);
           const dx = swayHit.x - lockX;
           const dz = swayHit.z - lockZ;
-          const radius = Math.hypot(dx, dz);
-          motionCircle.position.set(lockX, guideMidY, lockZ);
-          motionCircle.rotation.set(0, 0, 0);
-          motionCircle.scale.set(radius, 1, radius);
-          motionCircle.visible = radius > 0.05;
+          const { fwdX, fwdZ, stbdX, stbdZ } = headingVectors(current.heading);
+          const fore = dx * fwdX + dz * fwdZ;
+          const athwart = dx * stbdX + dz * stbdZ;
+          layAxis(pitchAxis, lockX, guideMidY, lockZ, fwdX * fore, fwdZ * fore);
+          layAxis(rollAxis, lockX, guideMidY, lockZ, stbdX * athwart, stbdZ * athwart);
+          pitchAxis.visible = Math.abs(fore) > 0.05;
+          rollAxis.visible = Math.abs(athwart) > 0.05;
         }
         bowPoint.set(bowStation, 0, 0).applyMatrix4(boatGroup.matrixWorld);
         ring.position.set(
@@ -593,8 +609,9 @@ export function WaveView(props: Props) {
       (swayLine.material as THREE.Material).dispose();
       lockLine.geometry.dispose();
       (lockLine.material as THREE.Material).dispose();
-      motionCircle.geometry.dispose();
-      (motionCircle.material as THREE.Material).dispose();
+      pitchAxis.geometry.dispose();
+      rollAxis.geometry.dispose();
+      axisMaterial.dispose();
       renderer.dispose();
       if (renderer.domElement.parentElement === wrap) wrap.removeChild(renderer.domElement);
     };
