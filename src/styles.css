@@ -86,7 +86,7 @@ button, input { font: inherit; color: inherit; }
 .legend-bar {
   height: 14px;
   border-radius: 999px;
-  background: linear-gradient(90deg, #14d6e6 0%, #3d7cff 28%, #8a6bff 50%, #e456c8 74%, #ff3d8a 100%);
+  background: linear-gradient(90deg, #1459ff 0%, #ff1a9a 100%);
 }
 .legend-ticks {
   display: flex;

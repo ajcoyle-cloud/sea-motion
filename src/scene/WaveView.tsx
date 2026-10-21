@@ -49,9 +49,6 @@ precision highp float;
 uniform float uRange;
 uniform vec3 uC0;
 uniform vec3 uC1;
-uniform vec3 uC2;
-uniform vec3 uC3;
-uniform vec3 uC4;
 uniform vec2 uGrid;
 uniform vec2 uOrigin;
 uniform vec2 uSpan;
@@ -63,11 +60,10 @@ varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vWorld;
 
+// Two stops only. Troughs are blue, crests are pink. A third stop at cyan
+// was painting the lower part of every wave aqua.
 vec3 ramp(float t) {
-  if (t < 0.28) return mix(uC0, uC1, t / 0.28);
-  if (t < 0.50) return mix(uC1, uC2, (t - 0.28) / 0.22);
-  if (t < 0.74) return mix(uC2, uC3, (t - 0.50) / 0.24);
-  return mix(uC3, uC4, clamp((t - 0.74) / 0.26, 0.0, 1.0));
+  return mix(uC0, uC1, clamp(t, 0.0, 1.0));
 }
 
 // Cells in ship axes, fixed to the water, so the lattice slides aft.
@@ -93,15 +89,6 @@ float meshLine(vec2 coord) {
   return max(line, 1.0 - smoothstep(0.07, soft, ddist / dfw));
 }
 
-// Height still leads. On the triangle mesh, steep faces borrow colour from
-// further along the ramp so a passing wave flashes through the lattice.
-vec3 seaColour(float t, vec3 nrm) {
-  if (uLattice < 0.5) return ramp(t);
-  float slope = clamp(length(nrm.xz) * 2.6, 0.0, 1.0);
-  float live = clamp(t + (slope - 0.18) * 0.42, 0.0, 1.0);
-  return ramp(live);
-}
-
 void main() {
   float edge = smoothstep(0.0, 0.025, vUv.x) * smoothstep(1.0, 0.975, vUv.x);
   edge *= smoothstep(0.0, 0.03, vUv.y) * smoothstep(1.0, 0.97, vUv.y);
@@ -114,7 +101,7 @@ void main() {
 
   if (uMode < 0.5) {
     float t = clamp(vH / uRange * 0.5 + 0.5, 0.0, 1.0);
-    vec3 col = seaColour(t, n);
+    vec3 col = ramp(t);
     float line = meshLine(seaCoord());
     if (uLattice > 0.5) {
       float spark = pow(clamp(dot(n, halfDir), 0.0, 1.0), 22.0);
@@ -130,7 +117,7 @@ void main() {
 
   if (uMode < 1.5) {
     float t = clamp(vH / uRange * 0.5 + 0.5, 0.0, 1.0);
-    vec3 col = seaColour(t, n);
+    vec3 col = ramp(t);
     float line = meshLine(seaCoord());
     float specGain = uLattice > 0.5 ? 0.32 : 0.12;
     float light = uLattice > 0.5 ? 0.42 + 0.95 * ndl : 0.34 + 0.7 * ndl;
@@ -256,11 +243,8 @@ export function WaveView(props: Props) {
       uHeading: { value: new THREE.Vector2(0, -1) },
       uMode: { value: 0 },
       uLattice: { value: 0 },
-      uC0: { value: color('#14d6e6') },
-      uC1: { value: color('#3d7cff') },
-      uC2: { value: color('#8a6bff') },
-      uC3: { value: color('#e456c8') },
-      uC4: { value: color('#ff3d8a') },
+      uC0: { value: color('#1459ff') },
+      uC1: { value: color('#ff1a9a') },
     };
     const seaMat = new THREE.ShaderMaterial({
       uniforms,
