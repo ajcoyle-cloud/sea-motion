@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { Boat, Scales, WaveComponent } from '../sim/model';
 import { emptyDofs, elevationRange, headingVectors, resolveWave, stepBoat } from '../sim/model';
 import { createBoatGroup } from './boatMesh';
+import { loadCatamaran } from './catamaran';
 import { FIRST40_GUIDE } from './first40';
 
 const SEA_W = 84;
@@ -407,6 +408,18 @@ export function WaveView(props: Props) {
     let flash = 0;
     let boatId = '';
     let boatGroup: THREE.Group | null = null;
+    let mountGen = 0;
+    let alive = true;
+
+    function releaseBoat(group: THREE.Group) {
+      swayLine.removeFromParent();
+      scene.remove(group);
+      if (group.userData.keepGeometry) return;
+      group.traverse((obj: THREE.Object3D) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.geometry) mesh.geometry.dispose();
+      });
+    }
 
     function syncWaves(waves: WaveComponent[], range: number) {
       waves.forEach((wave, i) => {
@@ -418,23 +431,14 @@ export function WaveView(props: Props) {
     }
 
     function mountBoat(boat: Boat) {
-      if (boatGroup) {
-        swayLine.removeFromParent();
-        scene.remove(boatGroup);
-        boatGroup.traverse((obj) => {
-          const mesh = obj as THREE.Mesh;
-          if (mesh.geometry) mesh.geometry.dispose();
-        });
-      }
-      boatGroup = createBoatGroup(boat);
-      boatGroup.renderOrder = 1;
-      scene.add(boatGroup);
+      const generation = ++mountGen;
+      if (boatGroup) releaseBoat(boatGroup);
+      boatGroup = null;
       const showGuide = boat.id === 'first-40';
       swayLine.visible = showGuide;
       lockLine.visible = showGuide;
       pitchAxis.visible = showGuide;
       rollAxis.visible = showGuide;
-      if (showGuide) boatGroup.add(swayLine);
       boatId = boat.id;
       state.dofs = emptyDofs();
       state.armed = false;
@@ -444,8 +448,29 @@ export function WaveView(props: Props) {
         stepBoat(current.boat, current.waves, current.heading, current.speedKn, state, current.scales, 1 / 30);
       }
       flash = 0;
-      bowStation = readBowStation(boatGroup, current.boat.bowX);
-      sternStation = readSternStation(boatGroup, -current.boat.lwl * 0.5);
+      bowStation = boat.bowX;
+      sternStation = -boat.lwl * 0.5;
+
+      const attach = (group: THREE.Group) => {
+        if (!alive || generation !== mountGen) return;
+        group.renderOrder = 1;
+        scene.add(group);
+        boatGroup = group;
+        if (showGuide) boatGroup.add(swayLine);
+        const bow = group.userData.bowX;
+        const stern = group.userData.sternX;
+        bowStation = typeof bow === 'number' ? bow : readBowStation(group, boat.bowX);
+        sternStation = typeof stern === 'number' ? stern : readSternStation(group, -boat.lwl * 0.5);
+      };
+
+      if (boat.id !== 'leopard-45') {
+        attach(createBoatGroup(boat));
+        return;
+      }
+      loadCatamaran(boat).then(attach).catch((error) => {
+        console.error(error);
+        attach(createBoatGroup(boat));
+      });
     }
 
     const resize = () => {
@@ -550,7 +575,7 @@ export function WaveView(props: Props) {
         sternPoint.set(sternStation, 0, 0).applyMatrix4(boatGroup.matrixWorld);
         const length = Math.min(48, 10 + speedKn * 3.2);
         const strength = Math.min(1, (speedKn - 0.35) / 3);
-        const half0 = current.boat.hullBeam * 0.38;
+        const half0 = current.boat.kind === 'cat' ? current.boat.beam * 0.46 : current.boat.hullBeam * 0.38;
         const wakeTan = Math.tan(KELVIN);
         const pos = wakePos.array as Float32Array;
         const col = wakeCol.array as Float32Array;
@@ -596,6 +621,7 @@ export function WaveView(props: Props) {
     raf = requestAnimationFrame(frame);
 
     return () => {
+      alive = false;
       cancelAnimationFrame(raf);
       renderer.domElement.removeEventListener('pointerdown', stopRotate);
       controls.removeEventListener('start', stopRotate);
